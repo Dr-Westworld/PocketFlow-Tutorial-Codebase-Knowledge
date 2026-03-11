@@ -1,4 +1,5 @@
 import os
+import time         
 import json
 import subprocess
 import markdown
@@ -8,30 +9,25 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 import shutil
 import tempfile
-
-# Prometheus metrics
-from prometheus_client import make_wsgi_app, REGISTRY
-from utils.metrics import MetricsCollector
+from prometheus_client import REGISTRY
+from utils.metrics import MetricsCollector   
 from flow import create_tutorial_flow
 
 # Configuration
-APP_FOLDER = Path(__file__).parent
-OUTPUT_DIR = APP_FOLDER / "output"
-UPLOAD_DIR = APP_FOLDER / "uploads"
+APP_FOLDER   = Path(__file__).parent
+OUTPUT_DIR   = APP_FOLDER / "output"
+UPLOAD_DIR   = APP_FOLDER / "uploads"
 TEMPLATE_DIR = APP_FOLDER / "templates"
-STATIC_DIR = APP_FOLDER / "static"
-
-# Create necessary directories
+STATIC_DIR   = APP_FOLDER / "static"
 OUTPUT_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 TEMPLATE_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR))
-app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
+app.config['UPLOAD_FOLDER']        = str(UPLOAD_DIR)
+app.config['MAX_CONTENT_LENGTH']   = 100 * 1024 * 1024  # 100 MB
 
-# Default patterns from main.py
 DEFAULT_INCLUDE_PATTERNS = [
     "*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.go", "*.java", "*.pyi", "*.pyx",
     "*.c", "*.cc", "*.cpp", "*.h", "*.md", "*.rst", "*Dockerfile",
@@ -52,24 +48,17 @@ def extract_and_process_mermaid(markdown_content):
     Extract mermaid blocks BEFORE markdown processing using HTML comments.
     This survives markdown processing better than plain text placeholders.
     """
-    # Store mermaid blocks with unique identifiers
-    mermaid_blocks = {}
-    placeholder_counter = [0]
-
-    # Pattern to match mermaid code blocks in markdown (with or without blank lines)
-    mermaid_pattern = r'```mermaid\s*\n(.*?)\n```'
+    mermaid_blocks       = {}
+    placeholder_counter  = [0]
+    mermaid_pattern      = r'```mermaid\s*\n(.*?)\n```'
 
     def extract_block(match):
         code = match.group(1).strip()
         placeholder_counter[0] += 1
-        block_id = placeholder_counter[0]
-        mermaid_blocks[block_id] = code
+        block_id                  = placeholder_counter[0]
+        mermaid_blocks[block_id]  = code
+        return f'<!-- MERMAID_BLOCK_{block_id} -->'
 
-        # Use HTML comment format that survives markdown processing
-        placeholder = f'<!-- MERMAID_BLOCK_{block_id} -->'
-        return placeholder
-
-    # Extract all mermaid blocks
     modified_content = re.sub(mermaid_pattern, extract_block, markdown_content, flags=re.DOTALL)
 
     print(f"[DEBUG] Extracted {len(mermaid_blocks)} mermaid blocks")
@@ -91,12 +80,9 @@ def reinject_mermaid_divs(html_content, mermaid_blocks):
 
     for block_id, code in mermaid_blocks.items():
         placeholder = f'<!-- MERMAID_BLOCK_{block_id} -->'
-
         if placeholder in html_content:
             print(f"[DEBUG] Found placeholder {block_id}, replacing it")
-            # Create the mermaid div with the raw code (don't escape for div content)
-            mermaid_div = f'<div class="mermaid">\n{code}\n</div>'
-            html_content = html_content.replace(placeholder, mermaid_div)
+            html_content = html_content.replace(placeholder, f'<div class="mermaid">\n{code}\n</div>')
         else:
             print(f"[DEBUG] WARNING: Placeholder {block_id} NOT FOUND in HTML!")
             print(f"[DEBUG] Looking for: {placeholder}")
@@ -107,10 +93,9 @@ def reinject_mermaid_divs(html_content, mermaid_blocks):
 
 @app.route('/')
 def index():
-    """Serve the main page"""
     return render_template('index.html',
-                          default_include=DEFAULT_INCLUDE_PATTERNS,
-                          default_exclude=DEFAULT_EXCLUDE_PATTERNS)
+                           default_include=DEFAULT_INCLUDE_PATTERNS,
+                           default_exclude=DEFAULT_EXCLUDE_PATTERNS)
 
 
 @app.route('/metrics')
@@ -122,13 +107,13 @@ def metrics():
         import json as _json, time as _time
         with open("debug-785079.log", "a", encoding="utf-8") as _f:
             _payload = {
-                "sessionId": "785079",
-                "runId": "initial",
+                "sessionId":    "785079",
+                "runId":        "initial",
                 "hypothesisId": "H1",
-                "location": "app.py:/metrics",
-                "message": "metrics_endpoint_called",
-                "data": {},
-                "timestamp": int(_time.time() * 1000),
+                "location":     "app.py:/metrics",
+                "message":      "metrics_endpoint_called",
+                "data":         {},
+                "timestamp":    int(_time.time() * 1000),
             }
             _f.write(_json.dumps(_payload) + "\n")
     except Exception:
@@ -143,14 +128,12 @@ def process_repository():
     try:
         data = request.json
 
-        # Validate input
         if not data.get('source'):
             return jsonify({'error': 'No source provided'}), 400
 
-        source_type = data.get('sourceType')  # 'github' or 'local'
+        source_type = data.get('sourceType')
 
-        # Build shared config similar to main.py
-        repo_url = None
+        repo_url  = None
         local_dir = None
         if source_type == 'github':
             repo_url = data.get('source')
@@ -170,41 +153,44 @@ def process_repository():
         if data.get('exclude'):
             exclude_patterns = {p.strip() for p in data['exclude'].split(',') if p.strip()}
 
-        max_size = int(data.get('maxSize') or 100000)
-        language = data.get('language') or 'english'
-        use_cache = not data.get('disableCache', False)
+        max_size    = int(data.get('maxSize') or 100000)
+        language    = data.get('language') or 'english'
+        use_cache   = not data.get('disableCache', False)
 
         shared = {
-            "repo_url": repo_url,
-            "local_dir": local_dir,
-            "project_name": None,
-            "github_token": None,
-            "output_dir": "output",
-            "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns,
-            "max_file_size": max_size,
-            "language": language,
-            "use_cache": use_cache,
+            "repo_url":           repo_url,
+            "local_dir":          local_dir,
+            "project_name":       None,
+            "github_token":       None,
+            "output_dir":         "output",
+            "include_patterns":   include_patterns,
+            "exclude_patterns":   exclude_patterns,
+            "max_file_size":      max_size,
+            "language":           language,
+            "use_cache":          use_cache,
             "max_abstraction_num": 10,
-            "files": [],
-            "abstractions": [],
-            "relationships": {},
-            "chapter_order": [],
-            "chapters": [],
-            "final_output_dir": None,
+            "files":              [],
+            "abstractions":       [],
+            "relationships":      {},
+            "chapter_order":      [],
+            "chapters":           [],
+            "final_output_dir":   None,
+            
+            # record the true end-to-end wall time via MetricsCollector.record_total_generation_time
+            "_pipeline_start_time": time.perf_counter(),
+            
         }
 
         tutorial_flow = create_tutorial_flow()
         tutorial_flow.run(shared)
 
-        # Get the list of tutorials
         tutorials = list_tutorials()
 
         return jsonify({
             'success': True,
             'message': 'Processing completed successfully',
             'tutorials': tutorials,
-            'output': f"Output directory: {shared.get('final_output_dir')}"
+            'output':   f"Output directory: {shared.get('final_output_dir')}"
         })
 
     except subprocess.TimeoutExpired:
@@ -215,7 +201,6 @@ def process_repository():
 
 @app.route('/api/tutorials')
 def get_tutorials():
-    """Get list of all tutorials"""
     try:
         tutorials = list_tutorials()
         return jsonify({'tutorials': tutorials})
@@ -224,9 +209,7 @@ def get_tutorials():
 
 
 def list_tutorials():
-    """List all available tutorials in the output directory"""
     tutorials = []
-
     if not OUTPUT_DIR.exists():
         return tutorials
 
@@ -234,24 +217,23 @@ def list_tutorials():
         if not project_dir.is_dir():
             continue
 
-        project_name = project_dir.name
+        project_name   = project_dir.name
         markdown_files = []
 
-        # Find all markdown files
         for md_file in project_dir.rglob('*.md'):
             rel_path = md_file.relative_to(project_dir)
             markdown_files.append({
-                'name': md_file.stem,
-                'path': str(rel_path).replace('\\', '/'),
+                'name':         md_file.stem,
+                'path':         str(rel_path).replace('\\', '/'),
                 'display_name': md_file.stem.replace('_', ' ').title()
             })
 
         if markdown_files:
             tutorials.append({
-                'name': project_name,
+                'name':         project_name,
                 'display_name': project_name.replace('_', ' ').replace('-', ' ').title(),
-                'files': sorted(markdown_files, key=lambda x: x['name']),
-                'file_count': len(markdown_files)
+                'files':        sorted(markdown_files, key=lambda x: x['name']),
+                'file_count':   len(markdown_files)
             })
 
     return sorted(tutorials, key=lambda x: x['name'])
@@ -259,40 +241,30 @@ def list_tutorials():
 
 @app.route('/tutorial/<tutorial_name>/<file_path>')
 def view_tutorial(tutorial_name, file_path):
-    """Display a tutorial markdown file as HTML"""
     try:
         tutorial_dir = OUTPUT_DIR / tutorial_name
-
         if not tutorial_dir.exists():
             return f"<h1>Tutorial not found: {tutorial_name}</h1>", 404
 
-        # Secure the file path
         file_name = secure_filename(file_path)
-        md_file = tutorial_dir / f"{file_name}.md"
+        md_file   = tutorial_dir / f"{file_name}.md"
 
         if not md_file.exists():
-            # Try without extension
             md_file = tutorial_dir / file_path
             if not md_file.exists() or not md_file.name.endswith('.md'):
                 return f"<h1>File not found: {file_path}</h1>", 404
 
-        # Read markdown file
         with open(md_file, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Extract mermaid blocks BEFORE markdown processing
         modified_content, mermaid_blocks = extract_and_process_mermaid(content)
-
-        # Convert markdown to HTML (mermaid blocks are now placeholders)
-        html_content = markdown.markdown(modified_content, extensions=['extra', 'codehilite', 'toc'])
-
-        # Reinsert mermaid diagrams as proper divs
-        html_content = reinject_mermaid_divs(html_content, mermaid_blocks)
+        html_content                     = markdown.markdown(modified_content, extensions=['extra', 'codehilite', 'toc'])
+        html_content                     = reinject_mermaid_divs(html_content, mermaid_blocks)
 
         return render_template('viewer.html',
-                             content=html_content,
-                             title=md_file.stem.replace('_', ' ').title(),
-                             tutorial_name=tutorial_name)
+                               content=html_content,
+                               title=md_file.stem.replace('_', ' ').title(),
+                               tutorial_name=tutorial_name)
 
     except Exception as e:
         return f"<h1>Error loading tutorial</h1><p>{str(e)}</p>", 500
@@ -300,45 +272,35 @@ def view_tutorial(tutorial_name, file_path):
 
 @app.route('/api/process-upload', methods=['POST'])
 def process_upload():
-    """Handle directory upload processing"""
     try:
         if 'directory' not in request.files:
             return jsonify({'error': 'No directory provided'}), 400
 
-        # Get other form data
-        include = request.form.get('include', '')
-        exclude = request.form.get('exclude', '')
-        max_size = request.form.get('maxSize', 100000)
-        language = request.form.get('language', 'english')
+        include      = request.form.get('include', '')
+        exclude      = request.form.get('exclude', '')
+        max_size     = request.form.get('maxSize', 100000)
+        language     = request.form.get('language', 'english')
         disable_cache = request.form.get('disableCache') == 'true'
 
-        # Process uploaded files
         files = request.files.getlist('directory')
-
         if not files:
             return jsonify({'error': 'No files uploaded'}), 400
 
-        # Create temporary directory for uploaded files
         temp_dir = tempfile.mkdtemp()
 
         try:
-            # Save uploaded files maintaining structure
             for file in files:
                 if file.filename:
                     file_path = Path(temp_dir) / secure_filename(file.filename)
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     file.save(file_path)
 
-            # Build command
             cmd = ['python', 'main.py', '--dir', temp_dir]
 
             if include:
-                include_patterns = [p.strip() for p in include.split(',') if p.strip()]
-                cmd.extend(['--include'] + include_patterns)
-
+                cmd.extend(['--include'] + [p.strip() for p in include.split(',') if p.strip()])
             if exclude:
-                exclude_patterns = [p.strip() for p in exclude.split(',') if p.strip()]
-                cmd.extend(['--exclude'] + exclude_patterns)
+                cmd.extend(['--exclude'] + [p.strip() for p in exclude.split(',') if p.strip()])
 
             cmd.extend(['--max-size', str(max_size)])
             cmd.extend(['--language', language])
@@ -346,23 +308,20 @@ def process_upload():
             if disable_cache:
                 cmd.append('--no-cache')
 
-            # Run the main.py script
             result = subprocess.run(cmd, cwd=str(APP_FOLDER), capture_output=True, text=True, timeout=300)
 
             if result.returncode != 0:
                 return jsonify({'error': f'Processing failed: {result.stderr}'}), 500
 
             tutorials = list_tutorials()
-
             return jsonify({
                 'success': True,
                 'message': 'Processing completed successfully',
                 'tutorials': tutorials,
-                'output': result.stdout
+                'output':   result.stdout
             })
 
         finally:
-            # Clean up temporary directory
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     except subprocess.TimeoutExpired:
@@ -373,10 +332,8 @@ def process_upload():
 
 @app.route('/downloads/<path:filename>')
 def download_file(filename):
-    """Download a file"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
 if __name__ == '__main__':
-    # app.run(debug=True, host='localhost', port=5000)
     app.run(debug=True, host='0.0.0.0', port=5000)
