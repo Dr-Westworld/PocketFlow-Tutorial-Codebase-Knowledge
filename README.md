@@ -6,7 +6,8 @@
 
 This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/PocketFlow), a 100-line LLM framework. It crawls GitHub repositories and builds a knowledge base from the code. It analyzes entire codebases to identify core abstractions and how they interact, and transforms complex code into beginner-friendly tutorials with clear visualizations.
 
-![alt text](full_system_architecture.svg)
+<img width="1410" height="2238" alt="image" src="https://github.com/user-attachments/assets/3260ee0f-0341-4e97-8d41-4def2a30e213" />
+
 
 3. Install dependencies:
    ```bash
