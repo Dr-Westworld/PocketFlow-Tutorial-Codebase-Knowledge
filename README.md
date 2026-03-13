@@ -8,6 +8,8 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
 
 <img width="1410" height="2238" alt="image" src="https://github.com/user-attachments/assets/3260ee0f-0341-4e97-8d41-4def2a30e213" />
 
+![Alt text for the image](full_system_architecture.svg)
+
 
 3. Install dependencies:
    ```bash
